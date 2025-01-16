@@ -130,7 +130,6 @@ type injectTestCase struct {
 
 	wantDelayMs  int
 	wantResponse *response
-	wantErr      bool
 }
 
 type headers injectTestCase
@@ -294,7 +293,6 @@ func TestInject(t *testing.T) {
 			faultDelayPercentageHeader: "-1",
 
 			wantDelayMs: 0,
-			wantErr:     true,
 		},
 		{
 			name: "invalid delay percentage over 100",
@@ -305,7 +303,6 @@ func TestInject(t *testing.T) {
 			faultDelayPercentageHeader: "101",
 
 			wantDelayMs: 0,
-			wantErr:     true,
 		},
 		{
 			name: "invalid delay ms",
@@ -315,7 +312,6 @@ func TestInject(t *testing.T) {
 			faultDelayMsHeader:       "NaN",
 
 			wantDelayMs: 0,
-			wantErr:     true,
 		},
 		{
 			name:     "error while sleeping short circuits",
@@ -328,7 +324,6 @@ func TestInject(t *testing.T) {
 			faultAbortMessageHeader:  "test fault",
 
 			wantDelayMs: 0,
-			wantErr:     true,
 		},
 		{
 			name: "invalid abort percentage negative",
@@ -338,8 +333,6 @@ func TestInject(t *testing.T) {
 			faultAbortCodeHeader:       "1",
 			faultAbortMessageHeader:    "test fault",
 			faultAbortPercentageHeader: "-1",
-
-			wantErr: true,
 		},
 		{
 			name: "invalid abort percentage over 100",
@@ -349,8 +342,6 @@ func TestInject(t *testing.T) {
 			faultAbortCodeHeader:       "1",
 			faultAbortMessageHeader:    "test fault",
 			faultAbortPercentageHeader: "101",
-
-			wantErr: true,
 		},
 		{
 			name: "invalid abort code",
@@ -359,8 +350,6 @@ func TestInject(t *testing.T) {
 			faultServerMethodHeader:  "testMethod",
 			faultAbortCodeHeader:     "NaN",
 			faultAbortMessageHeader:  "test fault",
-
-			wantErr: true,
 		},
 		{
 			name: "less than min abort code",
@@ -369,8 +358,6 @@ func TestInject(t *testing.T) {
 			faultServerMethodHeader:  "testMethod",
 			faultAbortCodeHeader:     "-1",
 			faultAbortMessageHeader:  "test fault",
-
-			wantErr: true,
 		},
 		{
 			name: "greater than max abort code",
@@ -379,8 +366,6 @@ func TestInject(t *testing.T) {
 			faultServerMethodHeader:  "testMethod",
 			faultAbortCodeHeader:     "11",
 			faultAbortMessageHeader:  "test fault",
-
-			wantErr: true,
 		},
 		{
 			name: "invalid abort percentage",
@@ -390,8 +375,6 @@ func TestInject(t *testing.T) {
 			faultAbortCodeHeader:       "1",
 			faultAbortMessageHeader:    "test fault",
 			faultAbortPercentageHeader: "NaN",
-
-			wantErr: true,
 		},
 	}
 
