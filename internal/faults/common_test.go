@@ -9,10 +9,10 @@ import (
 )
 
 const (
-	defaultAddress = "testService.testNamespace.svc.cluster.local:12345"
-	method         = "testMethod"
-	minAbortCode   = 0
-	maxAbortCode   = 10
+	address      = "testService.testNamespace.svc.cluster.local:12345"
+	method       = "testMethod"
+	minAbortCode = 0
+	maxAbortCode = 10
 )
 
 func TestGetCanonicalAddress(t *testing.T) {
@@ -111,36 +111,59 @@ func TestParsePercentage(t *testing.T) {
 	}
 }
 
-type Response struct {
+type response struct {
 	code    int
 	message string
 }
+type injectTestCase struct {
+	name     string
+	randInt  int
+	sleepErr bool
 
-func intPtr(i int) *int {
-	return &i
+	faultServerAddressHeader   string
+	faultServerMethodHeader    string
+	faultDelayMsHeader         string
+	faultDelayPercentageHeader string
+	faultAbortCodeHeader       string
+	faultAbortMessageHeader    string
+	faultAbortPercentageHeader string
+
+	wantDelayMs  int
+	wantResponse *response
+	wantErr      bool
 }
 
-func TestInjectFault(t *testing.T) {
-	testCases := []struct {
-		name     string
-		address  string
-		randInt  *int
-		sleepErr bool
+type headers injectTestCase
 
-		faultServerAddressHeader   string
-		faultServerMethodHeader    string
-		faultDelayMsHeader         string
-		faultDelayPercentageHeader string
-		faultAbortCodeHeader       string
-		faultAbortMessageHeader    string
-		faultAbortPercentageHeader string
+func (tc *headers) Lookup(_ context.Context, key string) (string, error) {
+	if key == FaultServerAddressHeader {
+		return tc.faultServerAddressHeader, nil
+	}
+	if key == FaultServerMethodHeader {
+		return tc.faultServerMethodHeader, nil
+	}
+	if key == FaultDelayMsHeader {
+		return tc.faultDelayMsHeader, nil
+	}
+	if key == FaultDelayPercentageHeader {
+		return tc.faultDelayPercentageHeader, nil
+	}
+	if key == FaultAbortCodeHeader {
+		return tc.faultAbortCodeHeader, nil
+	}
+	if key == FaultAbortMessageHeader {
+		return tc.faultAbortMessageHeader, nil
+	}
+	if key == FaultAbortPercentageHeader {
+		return tc.faultAbortPercentageHeader, nil
+	}
+	return "", fmt.Errorf("header %q not found", key)
+}
 
-		wantDelayMs  int
-		wantResponse *Response
-	}{
+func TestInject(t *testing.T) {
+	testCases := []injectTestCase{
 		{
-			name:         "no fault specified",
-			wantResponse: nil,
+			name: "no fault specified",
 		},
 		{
 			name: "delay",
@@ -159,21 +182,10 @@ func TestInjectFault(t *testing.T) {
 			faultAbortCodeHeader:     "1",
 			faultAbortMessageHeader:  "test fault",
 
-			wantResponse: &Response{
+			wantResponse: &response{
 				code:    1,
 				message: "test fault",
 			},
-		},
-		{
-			name:    "invalid server address",
-			address: "foo",
-
-			faultServerAddressHeader: "testService.testNamespace",
-			faultServerMethodHeader:  "testMethod",
-			faultAbortCodeHeader:     "1",
-			faultAbortMessageHeader:  "test fault",
-
-			wantResponse: nil,
 		},
 		{
 			name: "server address does not match",
@@ -182,8 +194,6 @@ func TestInjectFault(t *testing.T) {
 			faultServerMethodHeader:  "testMethod",
 			faultAbortCodeHeader:     "1",
 			faultAbortMessageHeader:  "test fault",
-
-			wantResponse: nil,
 		},
 		{
 			name: "method does not match",
@@ -192,12 +202,10 @@ func TestInjectFault(t *testing.T) {
 			faultServerMethodHeader:  "fooMethod",
 			faultAbortCodeHeader:     "1",
 			faultAbortMessageHeader:  "test fault",
-
-			wantResponse: nil,
 		},
 		{
 			name:    "guaranteed percent",
-			randInt: intPtr(99), // Maximum possible integer returned by rand.Intn(100)
+			randInt: 99, // Maximum possible integer returned by rand.Intn(100)
 
 			faultServerAddressHeader:   "testService.testNamespace",
 			faultServerMethodHeader:    "testMethod",
@@ -208,14 +216,14 @@ func TestInjectFault(t *testing.T) {
 			faultAbortPercentageHeader: "100", // All requests aborted
 
 			wantDelayMs: 250,
-			wantResponse: &Response{
+			wantResponse: &response{
 				code:    1,
 				message: "test fault",
 			},
 		},
 		{
 			name:    "fence post below percent",
-			randInt: intPtr(49),
+			randInt: 49,
 
 			faultServerAddressHeader:   "testService.testNamespace",
 			faultServerMethodHeader:    "testMethod",
@@ -226,14 +234,14 @@ func TestInjectFault(t *testing.T) {
 			faultAbortPercentageHeader: "50",
 
 			wantDelayMs: 250,
-			wantResponse: &Response{
+			wantResponse: &response{
 				code:    1,
 				message: "test fault",
 			},
 		},
 		{
 			name:    "fence post at percent",
-			randInt: intPtr(50),
+			randInt: 50,
 
 			faultServerAddressHeader:   "testService.testNamespace",
 			faultServerMethodHeader:    "testMethod",
@@ -243,12 +251,11 @@ func TestInjectFault(t *testing.T) {
 			faultAbortMessageHeader:    "test fault",
 			faultAbortPercentageHeader: "50",
 
-			wantDelayMs:  0,
-			wantResponse: nil,
+			wantDelayMs: 0,
 		},
 		{
 			name:    "guaranteed skip percent",
-			randInt: intPtr(0), // Minimum possible integer returned by rand.Intn(100)
+			randInt: 0, // Minimum possible integer returned by rand.Intn(100)
 
 			faultServerAddressHeader:   "testService.testNamespace",
 			faultServerMethodHeader:    "testMethod",
@@ -258,12 +265,11 @@ func TestInjectFault(t *testing.T) {
 			faultAbortMessageHeader:    "test fault",
 			faultAbortPercentageHeader: "0", // No requests aborted
 
-			wantDelayMs:  0,
-			wantResponse: nil,
+			wantDelayMs: 0,
 		},
 		{
 			name:    "only skip delay",
-			randInt: intPtr(50),
+			randInt: 50,
 
 			faultServerAddressHeader:   "testService.testNamespace",
 			faultServerMethodHeader:    "testMethod",
@@ -274,7 +280,7 @@ func TestInjectFault(t *testing.T) {
 			faultAbortPercentageHeader: "100", // All requests aborted
 
 			wantDelayMs: 0,
-			wantResponse: &Response{
+			wantResponse: &response{
 				code:    1,
 				message: "test fault",
 			},
@@ -288,6 +294,7 @@ func TestInjectFault(t *testing.T) {
 			faultDelayPercentageHeader: "-1",
 
 			wantDelayMs: 0,
+			wantErr:     true,
 		},
 		{
 			name: "invalid delay percentage over 100",
@@ -298,6 +305,7 @@ func TestInjectFault(t *testing.T) {
 			faultDelayPercentageHeader: "101",
 
 			wantDelayMs: 0,
+			wantErr:     true,
 		},
 		{
 			name: "invalid delay ms",
@@ -307,6 +315,7 @@ func TestInjectFault(t *testing.T) {
 			faultDelayMsHeader:       "NaN",
 
 			wantDelayMs: 0,
+			wantErr:     true,
 		},
 		{
 			name:     "error while sleeping short circuits",
@@ -319,6 +328,7 @@ func TestInjectFault(t *testing.T) {
 			faultAbortMessageHeader:  "test fault",
 
 			wantDelayMs: 0,
+			wantErr:     true,
 		},
 		{
 			name: "invalid abort percentage negative",
@@ -329,7 +339,7 @@ func TestInjectFault(t *testing.T) {
 			faultAbortMessageHeader:    "test fault",
 			faultAbortPercentageHeader: "-1",
 
-			wantResponse: nil,
+			wantErr: true,
 		},
 		{
 			name: "invalid abort percentage over 100",
@@ -340,7 +350,7 @@ func TestInjectFault(t *testing.T) {
 			faultAbortMessageHeader:    "test fault",
 			faultAbortPercentageHeader: "101",
 
-			wantResponse: nil,
+			wantErr: true,
 		},
 		{
 			name: "invalid abort code",
@@ -350,7 +360,7 @@ func TestInjectFault(t *testing.T) {
 			faultAbortCodeHeader:     "NaN",
 			faultAbortMessageHeader:  "test fault",
 
-			wantResponse: nil,
+			wantErr: true,
 		},
 		{
 			name: "less than min abort code",
@@ -360,7 +370,7 @@ func TestInjectFault(t *testing.T) {
 			faultAbortCodeHeader:     "-1",
 			faultAbortMessageHeader:  "test fault",
 
-			wantResponse: nil,
+			wantErr: true,
 		},
 		{
 			name: "greater than max abort code",
@@ -370,7 +380,7 @@ func TestInjectFault(t *testing.T) {
 			faultAbortCodeHeader:     "11",
 			faultAbortMessageHeader:  "test fault",
 
-			wantResponse: nil,
+			wantErr: true,
 		},
 		{
 			name: "invalid abort percentage",
@@ -381,71 +391,45 @@ func TestInjectFault(t *testing.T) {
 			faultAbortMessageHeader:    "test fault",
 			faultAbortPercentageHeader: "NaN",
 
-			wantResponse: nil,
+			wantErr: true,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			address := tc.address
-			if address == "" {
-				address = defaultAddress
+			injector := Injector[*response]{
+				ClientName:   "TestClient",
+				CallerName:   "faults_test.TestInjectFault",
+				AbortCodeMin: minAbortCode,
+				AbortCodeMax: maxAbortCode,
+				FaultFn: func(code int, message string) (*response, error) {
+					return &response{
+						code:    code,
+						message: message,
+					}, nil
+				},
 			}
 
-			getHeaderFn := GetHeaderFn(func(key string) string {
-				if key == FaultServerAddressHeader {
-					return tc.faultServerAddressHeader
-				}
-				if key == FaultServerMethodHeader {
-					return tc.faultServerMethodHeader
-				}
-				if key == FaultDelayMsHeader {
-					return tc.faultDelayMsHeader
-				}
-				if key == FaultDelayPercentageHeader {
-					return tc.faultDelayPercentageHeader
-				}
-				if key == FaultAbortCodeHeader {
-					return tc.faultAbortCodeHeader
-				}
-				if key == FaultAbortMessageHeader {
-					return tc.faultAbortMessageHeader
-				}
-				if key == FaultAbortPercentageHeader {
-					return tc.faultAbortPercentageHeader
-				}
-				return ""
-			})
-			var resumeFn ResumeFn[*Response] = func() (*Response, error) {
+			headers := headers(tc)
+
+			var resumeFn ResumeFn[*response] = func() (*response, error) {
 				return nil, nil
 			}
-			var responseFn ResponseFn[*Response] = func(code int, message string) (*Response, error) {
-				return &Response{
-					code:    code,
-					message: message,
-				}, nil
+
+			// Override the selected and sleep functions for testing.
+			selected = func(percentage int) bool {
+				return tc.randInt < percentage
 			}
 			delayMs := 0
-			sleepFn := sleepFn(func(ctx context.Context, d time.Duration) error {
+			sleep = func(_ context.Context, d time.Duration) error {
 				if tc.sleepErr {
 					return fmt.Errorf("context cancelled")
 				}
 				delayMs = int(d.Milliseconds())
 				return nil
-			})
+			}
 
-			resp, err := InjectFault(InjectFaultParams[*Response]{
-				CallerName:   "faults_test.TestInjectFault",
-				Address:      address,
-				Method:       method,
-				AbortCodeMin: minAbortCode,
-				AbortCodeMax: maxAbortCode,
-				GetHeaderFn:  getHeaderFn,
-				ResumeFn:     resumeFn,
-				ResponseFn:   responseFn,
-				sleepFn:      &sleepFn,
-				randInt:      tc.randInt,
-			})
+			resp, err := injector.Inject(context.Background(), address, method, &headers, resumeFn)
 
 			if err != nil {
 				t.Fatalf("expected no error, got %v", err)

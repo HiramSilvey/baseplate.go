@@ -1,11 +1,11 @@
 package faults
 
 const (
-	FaultServerAddressHeader   = "X-Bp-Fault-Server-Address"
-	FaultServerMethodHeader    = "X-Bp-Fault-Server-Method"
-	FaultDelayMsHeader         = "X-Bp-Fault-Delay-Ms"
-	FaultDelayPercentageHeader = "X-Bp-Fault-Delay-Percentage"
-	FaultAbortCodeHeader       = "X-Bp-Fault-Abort-Code"
-	FaultAbortMessageHeader    = "X-Bp-Fault-Abort-Message"
-	FaultAbortPercentageHeader = "X-Bp-Fault-Abort-Percentage"
+	FaultServerAddressHeader   = "x-bp-fault-server-address"
+	FaultServerMethodHeader    = "x-bp-fault-server-method"
+	FaultDelayMsHeader         = "x-bp-fault-delay-ms"
+	FaultDelayPercentageHeader = "x-bp-fault-delay-percentage"
+	FaultAbortCodeHeader       = "x-bp-fault-abort-code"
+	FaultAbortMessageHeader    = "x-bp-fault-abort-message"
+	FaultAbortPercentageHeader = "x-bp-fault-abort-percentage"
 )

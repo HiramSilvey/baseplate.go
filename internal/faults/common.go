@@ -10,23 +10,56 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+
+	"github.com/reddit/baseplate.go/internal/prometheusbpint"
 )
 
-// GetHeaderFn is the function type to return the value of a protocol-specific
-// header with the given key.
-type GetHeaderFn func(key string) string
+const (
+	promNamespace      = "faultbp"
+	clientNameLabel    = "fault_client_name"
+	serviceLabel       = "fault_service"
+	methodLabel        = "fault_method"
+	protocolLabel      = "fault_protocol"
+	successLabel       = "fault_success"
+	delayInjectedLabel = "fault_injected_delay"
+	abortInjectedLabel = "fault_injected_abort"
+)
+
+var (
+	TotalRequests = promauto.With(prometheusbpint.GlobalRegistry).NewCounterVec(prometheus.CounterOpts{
+		Namespace: promNamespace,
+		Name:      "fault_requests_total",
+		Help:      "Total count of requests seen by the fault injection middleware.",
+	}, []string{
+		clientNameLabel,
+		serviceLabel,
+		methodLabel,
+		protocolLabel,
+		successLabel,
+		delayInjectedLabel,
+		abortInjectedLabel,
+	})
+)
+
+// Headers is an interface to be implemented by the caller to allow
+// protocol-specific header lookup. Using an interface here rather than a
+// function type avoids any potential closure requirements of a function.
+type Headers interface {
+	// Lookup returns the value of a protocol-specific header with the
+	// given key.
+	Lookup(ctx context.Context, key string) (string, error)
+}
 
 // ResumeFn is the function type to continue processing the protocol-specific
 // request without injecting a fault.
 type ResumeFn[T any] func() (T, error)
 
-// ResponseFn is the function type to inject a protocol-specific fault with the
+// FaultFn is the function type to inject a protocol-specific fault with the
 // given code and message.
-type ResponseFn[T any] func(code int, message string) (T, error)
-
-// sleepFn is the function type to sleep for the given duration. Only used in
-// tests.
-type sleepFn func(ctx context.Context, d time.Duration) error
+type FaultFn[T any] func(code int, message string) (T, error)
 
 // The canonical address for a cluster-local address is <service>.<namespace>,
 // without the local cluster suffix or port. The canonical address for a
@@ -62,16 +95,15 @@ func parsePercentage(percentage string) (int, error) {
 	return intPercentage, nil
 }
 
-func selected(randInt *int, percentage int) bool {
-	if randInt != nil {
-		return *randInt < percentage
-	}
+// Global variable to allow overriding in tests.
+var selected = func(percentage int) bool {
 	// Use a different random integer per feature as per
 	// https://github.com/grpc/proposal/blob/master/A33-Fault-Injection.md#evaluate-possibility-fraction.
 	return rand.IntN(100) < percentage
 }
 
-func sleep(ctx context.Context, d time.Duration) error {
+// Global variable to allow overriding in tests.
+var sleep = func(ctx context.Context, d time.Duration) error {
 	t := time.NewTimer(d)
 	select {
 	case <-t.C:
@@ -82,81 +114,138 @@ func sleep(ctx context.Context, d time.Duration) error {
 	return nil
 }
 
-type InjectFaultParams[T any] struct {
-	Context    context.Context
-	CallerName string
-
-	Address, Method            string
+// Injector contains the data common across all requests needed to inject
+// faults on outgoing requests.
+//
+// AbortCodeMin, AbortCodeMax, and FaultFn are required.
+type Injector[T any] struct {
+	ClientName, CallerName     string
 	AbortCodeMin, AbortCodeMax int
 
-	GetHeaderFn GetHeaderFn
-	ResumeFn    ResumeFn[T]
-	ResponseFn  ResponseFn[T]
-
-	randInt *int
-	sleepFn *sleepFn
+	FaultFn FaultFn[T]
 }
 
-func InjectFault[T any](params InjectFaultParams[T]) (T, error) {
-	faultHeaderAddress := params.GetHeaderFn(FaultServerAddressHeader)
-	requestAddress := getCanonicalAddress(params.Address)
+// Inject injects a fault on the outgoing request if it matches the header configuration.
+func (i *Injector[T]) Inject(ctx context.Context, address, method string, headers Headers, resumeFn ResumeFn[T]) (T, error) {
+	delayed := false
+	totalReqsCounter := func(success, aborted bool) prometheus.Counter {
+		return TotalRequests.WithLabelValues(
+			i.ClientName,
+			address,
+			method,
+			i.CallerName,
+			strconv.FormatBool(success),
+			strconv.FormatBool(delayed),
+			strconv.FormatBool(aborted),
+		)
+	}
+
+	infof := func(format string, args ...interface{}) {
+		slog.With("caller", i.CallerName).InfoContext(ctx, fmt.Sprintf(format, args...))
+	}
+	warnf := func(format string, args ...interface{}) {
+		slog.With("caller", i.CallerName).WarnContext(ctx, fmt.Sprintf(format, args...))
+	}
+
+	faultHeaderAddress, err := headers.Lookup(ctx, FaultServerAddressHeader)
+	if err != nil {
+		infof("error looking up header %q: %v", FaultServerAddressHeader, err)
+		totalReqsCounter(true, false).Inc()
+		return resumeFn()
+	}
+	requestAddress := getCanonicalAddress(address)
 	if faultHeaderAddress == "" || faultHeaderAddress != requestAddress {
-		return params.ResumeFn()
+		infof("address %q does not match the %s header value %q", requestAddress, FaultServerAddressHeader, faultHeaderAddress)
+		totalReqsCounter(true, false).Inc()
+		return resumeFn()
 	}
 
-	serverMethod := params.GetHeaderFn(FaultServerMethodHeader)
-	if serverMethod != "" && serverMethod != params.Method {
-		return params.ResumeFn()
+	serverMethod, err := headers.Lookup(ctx, FaultServerMethodHeader)
+	if err != nil {
+		infof("error looking up header %q: %v", FaultServerMethodHeader, err)
+		totalReqsCounter(true, false).Inc()
+		return resumeFn()
+	}
+	if serverMethod != "" && serverMethod != method {
+		infof("method %q does not match the %s header value %q", method, FaultServerMethodHeader, serverMethod)
+		totalReqsCounter(true, false).Inc()
+		return resumeFn()
 	}
 
-	delayMs := params.GetHeaderFn(FaultDelayMsHeader)
+	delayMs, err := headers.Lookup(ctx, FaultDelayMsHeader)
+	if err != nil {
+		infof("error looking up header %q: %v", FaultDelayMsHeader, err)
+	}
 	if delayMs != "" {
-		percentage, err := parsePercentage(params.GetHeaderFn(FaultDelayPercentageHeader))
+		percentageHeader, err := headers.Lookup(ctx, FaultDelayPercentageHeader)
 		if err != nil {
-			slog.Warn(fmt.Sprintf("%s: %v", params.CallerName, err))
-			return params.ResumeFn()
+			infof("error looking up header %q: %v", FaultDelayPercentageHeader, err)
+		}
+		percentage, err := parsePercentage(percentageHeader)
+		if err != nil {
+			warnf("error parsing percentage header %q: %v", FaultDelayPercentageHeader, err)
+			totalReqsCounter(false, false).Inc()
+			return resumeFn()
 		}
 
-		if selected(params.randInt, percentage) {
+		if selected(percentage) {
 			delay, err := strconv.Atoi(delayMs)
 			if err != nil {
-				slog.Warn(fmt.Sprintf("%s: provided delay %q is not a valid integer", params.CallerName, delayMs))
-				return params.ResumeFn()
+				warnf("unable to convert provided delay %q to integer: %v", delayMs, err)
+				totalReqsCounter(false, false).Inc()
+				return resumeFn()
 			}
 
-			sleepFn := sleep
-			if params.sleepFn != nil {
-				sleepFn = *params.sleepFn
+			if err := sleep(ctx, time.Duration(delay)*time.Millisecond); err != nil {
+				warnf("error when delaying request: %v", err)
+				totalReqsCounter(false, false).Inc()
+				return resumeFn()
 			}
-			if err := sleepFn(params.Context, time.Duration(delay)*time.Millisecond); err != nil {
-				slog.Warn(fmt.Sprintf("%s: error when delaying request: %v", params.CallerName, err))
-				return params.ResumeFn()
-			}
+			delayed = true
 		}
 	}
 
-	abortCode := params.GetHeaderFn(FaultAbortCodeHeader)
+	abortCode, err := headers.Lookup(ctx, FaultAbortCodeHeader)
+	if err != nil {
+		infof("error looking up header %q: %v", FaultAbortCodeHeader, err)
+	}
 	if abortCode != "" {
-		percentage, err := parsePercentage(params.GetHeaderFn(FaultAbortPercentageHeader))
+		percentageHeader, err := headers.Lookup(ctx, FaultAbortPercentageHeader)
 		if err != nil {
-			slog.Warn(fmt.Sprintf("%s: %v", params.CallerName, err))
-			return params.ResumeFn()
+			infof("error looking up header %q: %v", FaultAbortPercentageHeader, err)
+		}
+		percentage, err := parsePercentage(percentageHeader)
+		if err != nil {
+			warnf("error parsing percentage header %q: %v", FaultAbortPercentageHeader, err)
+			totalReqsCounter(false, false).Inc()
+			return resumeFn()
 		}
 
-		if selected(params.randInt, percentage) {
+		if selected(percentage) {
 			code, err := strconv.Atoi(abortCode)
 			if err != nil {
-				slog.Warn(fmt.Sprintf("%s: provided abort code %q is not a valid integer", params.CallerName, abortCode))
-				return params.ResumeFn()
+				warnf("unable to convert provided abort %q to integer: %v", abortCode, err)
+				totalReqsCounter(false, false).Inc()
+				return resumeFn()
 			}
-			if code < params.AbortCodeMin || code > params.AbortCodeMax {
-				slog.Warn(fmt.Sprintf("%s: provided abort code \"%d\" is outside of the valid range", params.CallerName, code))
-				return params.ResumeFn()
+			if code < i.AbortCodeMin || code > i.AbortCodeMax {
+				warnf("provided abort code \"%d\" is outside of the valid range [%d-%d]", code, i.AbortCodeMin, i.AbortCodeMax)
+				totalReqsCounter(false, false).Inc()
+				return resumeFn()
 			}
-			abortMessage := params.GetHeaderFn(FaultAbortMessageHeader)
-			return params.ResponseFn(code, abortMessage)
+
+			abortMessage, err := headers.Lookup(ctx, FaultAbortMessageHeader)
+			if err != nil {
+				warnf("error looking up header %q: %v", FaultAbortMessageHeader, err)
+				totalReqsCounter(false, false).Inc()
+				return resumeFn()
+			}
+
+			totalReqsCounter(true, true).Inc()
+			return i.FaultFn(code, abortMessage)
 		}
 	}
 
-	return params.ResumeFn()
+	totalReqsCounter(true, false).Inc()
+	return resumeFn()
 }

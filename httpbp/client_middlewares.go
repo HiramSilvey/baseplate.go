@@ -16,7 +16,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/reddit/baseplate.go/breakerbp"
-	"github.com/reddit/baseplate.go/internal/faults"
 	//lint:ignore SA1019 This library is internal only, not actually deprecated
 	"github.com/reddit/baseplate.go/internalv2compat"
 	"github.com/reddit/baseplate.go/retrybp"
@@ -45,17 +44,17 @@ func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 // plus any additional client middleware passed into this function. Default
 // middlewares are:
 //
-// * FaultInjection
-//
 // * MonitorClient with transport.WithRetrySlugSuffix
 //
 // * PrometheusClientMetrics with transport.WithRetrySlugSuffix
 //
-// * Retries
-//
 // * MonitorClient
 //
 // * PrometheusClientMetrics
+//
+// * FaultInjection
+//
+// * Retries
 //
 // ClientErrorWrapper is included as transitive middleware through Retries.
 func NewClient(config ClientConfig, middleware ...ClientMiddleware) (*http.Client, error) {
@@ -79,13 +78,14 @@ func NewClient(config ClientConfig, middleware ...ClientMiddleware) (*http.Clien
 		config.RetryOptions = []retry.Option{retry.Attempts(1)}
 	}
 
+	clientFaultMiddleware := NewClientFaultMiddleware(config.Slug)
 	defaults := []ClientMiddleware{
-		FaultInjection(),
 		MonitorClient(config.Slug + transport.WithRetrySlugSuffix),
 		PrometheusClientMetrics(config.Slug + transport.WithRetrySlugSuffix),
-		Retries(config.MaxErrorReadAhead, config.RetryOptions...),
 		MonitorClient(config.Slug),
 		PrometheusClientMetrics(config.Slug),
+		clientFaultMiddleware.Middleware(),
+		Retries(config.MaxErrorReadAhead, config.RetryOptions...),
 	}
 
 	// prepend middleware to ensure Retires with ClientErrorWrapper is still
@@ -355,13 +355,14 @@ func PrometheusClientMetrics(serverSlug string) ClientMiddleware {
 	}
 }
 
-func FaultInjection() ClientMiddleware {
+func (c clientFaultMiddleware) Middleware() ClientMiddleware {
 	return func(next http.RoundTripper) http.RoundTripper {
 		return roundTripperFunc(func(req *http.Request) (*http.Response, error) {
 			resumeFn := func() (*http.Response, error) {
 				return next.RoundTrip(req)
 			}
-			responseFn := func(code int, message string) (*http.Response, error) {
+
+			c.injector.FaultFn = func(code int, message string) (*http.Response, error) {
 				return &http.Response{
 					Status:     http.StatusText(code),
 					StatusCode: code,
@@ -380,18 +381,9 @@ func FaultInjection() ClientMiddleware {
 				}, nil
 			}
 
-			resp, err := faults.InjectFault(faults.InjectFaultParams[*http.Response]{
-				Context:      req.Context(),
-				CallerName:   "httpbp.FaultInjection",
-				Address:      req.URL.Hostname(),
-				Method:       strings.TrimPrefix(req.URL.Path, "/"),
-				AbortCodeMin: 400,
-				AbortCodeMax: 599,
-				GetHeaderFn:  faults.GetHeaderFn(req.Header.Get),
-				ResumeFn:     resumeFn,
-				ResponseFn:   responseFn,
-			})
-			return resp, err
+			address := req.URL.Hostname()
+			method := strings.TrimPrefix(req.URL.Path, "/")
+			return c.injector.Inject(req.Context(), address, method, httpHeaders{req}, resumeFn)
 		})
 	}
 }

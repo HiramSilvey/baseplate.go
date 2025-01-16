@@ -429,7 +429,7 @@ func TestFaultInjectionClientMiddleware(t *testing.T) {
 		{
 			name: "service does not match",
 
-			faultServerAddrHeader:   "fooService.testNamespace",
+			faultServerAddrHeader:   "foo",
 			faultServerMethodHeader: "testMethod",
 			faultAbortCodeHeader:    "1", // NOT_OPEN
 			faultAbortMessageHeader: "test fault",
@@ -440,7 +440,7 @@ func TestFaultInjectionClientMiddleware(t *testing.T) {
 			name: "method does not match",
 
 			faultServerAddrHeader:   "testService.testNamespace",
-			faultServerMethodHeader: "fooMethod",
+			faultServerMethodHeader: "foo",
 			faultAbortCodeHeader:    "1", // NOT_OPEN
 			faultAbortMessageHeader: "test fault",
 
@@ -470,7 +470,6 @@ func TestFaultInjectionClientMiddleware(t *testing.T) {
 
 	for _, tt := range testCases {
 		t.Run(tt.name, func(t *testing.T) {
-
 			impl := ecinterface.Mock()
 			ctx := context.Background()
 
