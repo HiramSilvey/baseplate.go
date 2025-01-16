@@ -123,25 +123,28 @@ type DefaultClientMiddlewareArgs struct {
 // creates the prometheus client metrics from the view of the client that group
 // all retries into a single operation.
 //
-// 5. FailureRatioBreaker - Only if BreakerConfig is non-nil.
-//
-// 6. MonitorClient - This creates the spans of the raw client calls.
-//
-// 7. PrometheusClientMiddleware
-//
-// 8. BaseplateErrorWrapper
-//
-// 9. thrift.ExtractIDLExceptionClientMiddleware
-//
-// 10. SetDeadlineBudget
-//
-// 11. clientFaultMiddleware - This injects faults at the client side if the
-// request matches the provided configuration.
-//
-// 12. Retry(retryOptions) - If retryOptions is empty/nil, default to only
+// 5. Retry(retryOptions) - If retryOptions is empty/nil, default to only
 // retry.Attempts(1), this will not actually retry any calls but your client is
 // configured to set retry logic per-call using retrybp.WithOptions.
+//
+// 6. FailureRatioBreaker - Only if BreakerConfig is non-nil.
+//
+// 7. MonitorClient - This creates the spans of the raw client calls.
+//
+// 8. PrometheusClientMiddleware
+//
+// 9. BaseplateErrorWrapper
+//
+// 10. thrift.ExtractIDLExceptionClientMiddleware
+//
+// 11. SetDeadlineBudget
+//
+// 12. clientFaultMiddleware - This injects faults at the client side if the
+// request matches the provided configuration.
 func BaseplateDefaultClientMiddlewares(args DefaultClientMiddlewareArgs) []thrift.ClientMiddleware {
+	if len(args.RetryOptions) == 0 {
+		args.RetryOptions = []retry.Option{retry.Attempts(1)}
+	}
 	middlewares := []thrift.ClientMiddleware{
 		ForwardEdgeRequestContext(args.EdgeContextImpl),
 		SetClientName(args.ClientName),
@@ -150,6 +153,7 @@ func BaseplateDefaultClientMiddlewares(args DefaultClientMiddlewareArgs) []thrif
 			ErrorSpanSuppressor: args.ErrorSpanSuppressor,
 		}),
 		PrometheusClientMiddleware(args.ServiceSlug + MonitorClientWrappedSlugSuffix),
+		Retry(args.RetryOptions...),
 	}
 	if args.BreakerConfig != nil {
 		middlewares = append(
@@ -158,9 +162,6 @@ func BaseplateDefaultClientMiddlewares(args DefaultClientMiddlewareArgs) []thrif
 		)
 	}
 	clientFaultMiddleware := NewClientFaultMiddleware(args.ClientName, args.Address)
-	if len(args.RetryOptions) == 0 {
-		args.RetryOptions = []retry.Option{retry.Attempts(1)}
-	}
 	middlewares = append(
 		middlewares,
 		MonitorClient(MonitorClientArgs{
@@ -172,7 +173,6 @@ func BaseplateDefaultClientMiddlewares(args DefaultClientMiddlewareArgs) []thrif
 		thrift.ExtractIDLExceptionClientMiddleware,
 		SetDeadlineBudget,
 		clientFaultMiddleware.Middleware(),
-		Retry(args.RetryOptions...),
 	)
 	return middlewares
 }
