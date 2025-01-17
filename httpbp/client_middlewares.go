@@ -384,7 +384,7 @@ func (c clientFaultMiddleware) Middleware() ClientMiddleware {
 
 			address := req.URL.Hostname()
 			method := strings.TrimPrefix(req.URL.Path, "/")
-			return c.injector.InjectWithFaultOverride(req.Context(), address, method, httpHeaders{req}, resumeFn, faultFn)
+			return c.injector.InjectWithFaultFnOverride(req.Context(), address, method, httpHeaders{req}, resumeFn, faultFn)
 		})
 	}
 }

@@ -125,15 +125,9 @@ type Injector[T any] struct {
 	DefaultFaultFn FaultFn[T]
 }
 
-// Inject injects a fault on the outgoing request if it matches the header
-// configuration.
-func (i *Injector[T]) Inject(ctx context.Context, address, method string, headers Headers, resumeFn ResumeFn[T]) (T, error) {
-	return i.InjectWithFaultOverride(ctx, address, method, headers, resumeFn, nil)
-}
-
-// InjectWithFaultOverride injects a fault using the override fault function, if
-// present, on the outgoing request if it matches the header configuration.
-func (i *Injector[T]) InjectWithFaultOverride(ctx context.Context, address, method string, headers Headers, resumeFn ResumeFn[T], overrideFaultFn FaultFn[T]) (T, error) {
+// InjectWithFaultFnOverride injects a fault using the provided fault function
+// on the outgoing request if it matches the header configuration.
+func (i *Injector[T]) InjectWithFaultFnOverride(ctx context.Context, address, method string, headers Headers, resumeFn ResumeFn[T], faultFn FaultFn[T]) (T, error) {
 	delayed := false
 	totalReqsCounter := func(success, aborted bool) prometheus.Counter {
 		return TotalRequests.WithLabelValues(
@@ -249,13 +243,16 @@ func (i *Injector[T]) InjectWithFaultOverride(ctx context.Context, address, meth
 			}
 
 			totalReqsCounter(true, true).Inc()
-			if overrideFaultFn != nil {
-				return overrideFaultFn(code, abortMessage)
-			}
-			return i.DefaultFaultFn(code, abortMessage)
+			return faultFn(code, abortMessage)
 		}
 	}
 
 	totalReqsCounter(true, false).Inc()
 	return resumeFn()
+}
+
+// Inject injects a fault using the Injector default fault function on the
+// outgoing request if it matches the header configuration.
+func (i *Injector[T]) Inject(ctx context.Context, address, method string, headers Headers, resumeFn ResumeFn[T]) (T, error) {
+	return i.InjectWithFaultFnOverride(ctx, address, method, headers, resumeFn, i.DefaultFaultFn)
 }

@@ -385,7 +385,7 @@ func TestInject(t *testing.T) {
 				CallerName:   "faults_test.TestInjectFault",
 				AbortCodeMin: minAbortCode,
 				AbortCodeMax: maxAbortCode,
-				FaultFn: func(code int, message string) (*response, error) {
+				DefaultFaultFn: func(code int, message string) (*response, error) {
 					return &response{
 						code:    code,
 						message: message,
