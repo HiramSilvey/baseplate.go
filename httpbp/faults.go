@@ -15,12 +15,12 @@ type clientFaultMiddleware struct {
 // injection middleware.
 func NewClientFaultMiddleware(clientName string) clientFaultMiddleware {
 	return clientFaultMiddleware{
-		injector: faults.Injector[*http.Response]{
-			ClientName:   clientName,
-			CallerName:   "httpbp.clientFaultMiddleware",
-			AbortCodeMin: 400,
-			AbortCodeMax: 599,
-		},
+		injector: *faults.NewInjector[*http.Response](
+			clientName,
+			"httpbp.clientFaultMiddleware",
+			400,
+			599,
+		),
 	}
 }
 

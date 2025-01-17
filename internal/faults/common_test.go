@@ -380,18 +380,18 @@ func TestInject(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			injector := Injector[*response]{
-				ClientName:   "TestClient",
-				CallerName:   "faults_test.TestInjectFault",
-				AbortCodeMin: minAbortCode,
-				AbortCodeMax: maxAbortCode,
-				DefaultFaultFn: func(code int, message string) (*response, error) {
+			injector := NewInjector(
+				"TestClient",
+				"faults_test.TestInjectFault",
+				minAbortCode,
+				maxAbortCode,
+				WithDefaultFaultFn(func(code int, message string) (*response, error) {
 					return &response{
 						code:    code,
 						message: message,
 					}, nil
-				},
-			}
+				}),
+			)
 
 			headers := headers(tc)
 

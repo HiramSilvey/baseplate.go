@@ -17,15 +17,15 @@ type clientFaultMiddleware struct {
 func NewClientFaultMiddleware(clientName, address string) clientFaultMiddleware {
 	return clientFaultMiddleware{
 		address: address,
-		injector: faults.Injector[thrift.ResponseMeta]{
-			ClientName:   clientName,
-			CallerName:   "thriftpb.clientFaultMiddleware",
-			AbortCodeMin: thrift.UNKNOWN_TRANSPORT_EXCEPTION,
-			AbortCodeMax: thrift.END_OF_FILE,
-			DefaultFaultFn: func(code int, message string) (thrift.ResponseMeta, error) {
+		injector: *faults.NewInjector(
+			clientName,
+			"thriftpb.clientFaultMiddleware",
+			thrift.UNKNOWN_TRANSPORT_EXCEPTION,
+			thrift.END_OF_FILE,
+			faults.WithDefaultFaultFn(func(code int, message string) (thrift.ResponseMeta, error) {
 				return thrift.ResponseMeta{}, thrift.NewTTransportException(code, message)
-			},
-		},
+			}),
+		),
 	}
 }
 

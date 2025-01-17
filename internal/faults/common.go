@@ -119,10 +119,29 @@ var sleep = func(ctx context.Context, d time.Duration) error {
 //
 // AbortCodeMin and AbortCodeMax are required.
 type Injector[T any] struct {
-	ClientName, CallerName     string
-	AbortCodeMin, AbortCodeMax int
+	clientName, callerName     string
+	abortCodeMin, abortCodeMax int
 
-	DefaultFaultFn FaultFn[T]
+	defaultFaultFn FaultFn[T]
+}
+
+func WithDefaultFaultFn[T any](fn FaultFn[T]) func(*Injector[T]) {
+	return func(i *Injector[T]) {
+		i.defaultFaultFn = fn
+	}
+}
+
+func NewInjector[T any](clientName, callerName string, abortCodeMin, abortCodeMax int, option ...func(*Injector[T])) *Injector[T] {
+	i := &Injector[T]{
+		clientName:   clientName,
+		callerName:   callerName,
+		abortCodeMin: abortCodeMin,
+		abortCodeMax: abortCodeMax,
+	}
+	for _, o := range option {
+		o(i)
+	}
+	return i
 }
 
 // InjectWithFaultFnOverride injects a fault using the provided fault function
@@ -131,10 +150,10 @@ func (i *Injector[T]) InjectWithFaultFnOverride(ctx context.Context, address, me
 	delayed := false
 	totalReqsCounter := func(success, aborted bool) prometheus.Counter {
 		return TotalRequests.WithLabelValues(
-			i.ClientName,
+			i.clientName,
 			address,
 			method,
-			i.CallerName,
+			i.callerName,
 			strconv.FormatBool(success),
 			strconv.FormatBool(delayed),
 			strconv.FormatBool(aborted),
@@ -142,10 +161,10 @@ func (i *Injector[T]) InjectWithFaultFnOverride(ctx context.Context, address, me
 	}
 
 	infof := func(format string, args ...interface{}) {
-		slog.With("caller", i.CallerName).InfoContext(ctx, fmt.Sprintf(format, args...))
+		slog.With("caller", i.callerName).InfoContext(ctx, fmt.Sprintf(format, args...))
 	}
 	warnf := func(format string, args ...interface{}) {
-		slog.With("caller", i.CallerName).WarnContext(ctx, fmt.Sprintf(format, args...))
+		slog.With("caller", i.callerName).WarnContext(ctx, fmt.Sprintf(format, args...))
 	}
 
 	faultHeaderAddress, err := headers.Lookup(ctx, FaultServerAddressHeader)
@@ -229,8 +248,8 @@ func (i *Injector[T]) InjectWithFaultFnOverride(ctx context.Context, address, me
 				totalReqsCounter(false, false).Inc()
 				return resumeFn()
 			}
-			if code < i.AbortCodeMin || code > i.AbortCodeMax {
-				warnf("provided abort code \"%d\" is outside of the valid range [%d-%d]", code, i.AbortCodeMin, i.AbortCodeMax)
+			if code < i.abortCodeMin || code > i.abortCodeMax {
+				warnf("provided abort code \"%d\" is outside of the valid range [%d-%d]", code, i.abortCodeMin, i.abortCodeMax)
 				totalReqsCounter(false, false).Inc()
 				return resumeFn()
 			}
@@ -254,5 +273,5 @@ func (i *Injector[T]) InjectWithFaultFnOverride(ctx context.Context, address, me
 // Inject injects a fault using the Injector default fault function on the
 // outgoing request if it matches the header configuration.
 func (i *Injector[T]) Inject(ctx context.Context, address, method string, headers Headers, resumeFn ResumeFn[T]) (T, error) {
-	return i.InjectWithFaultFnOverride(ctx, address, method, headers, resumeFn, i.DefaultFaultFn)
+	return i.InjectWithFaultFnOverride(ctx, address, method, headers, resumeFn, i.defaultFaultFn)
 }
