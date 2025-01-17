@@ -408,13 +408,11 @@ func TestFaultInjection(t *testing.T) {
 		faultAbortMessageHeader    string
 		faultAbortPercentageHeader string
 
-		wantResp *http.Response
+		wantStatusCode int
 	}{
 		{
-			name: "no fault specified",
-			wantResp: &http.Response{
-				StatusCode: http.StatusOK,
-			},
+			name:           "no fault specified",
+			wantStatusCode: http.StatusOK,
 		},
 		{
 			name: "abort",
@@ -423,9 +421,7 @@ func TestFaultInjection(t *testing.T) {
 			faultServerMethodHeader: "testMethod",
 			faultAbortCodeHeader:    "500",
 
-			wantResp: &http.Response{
-				StatusCode: http.StatusInternalServerError,
-			},
+			wantStatusCode: http.StatusInternalServerError,
 		},
 		{
 			name: "service does not match",
@@ -434,9 +430,7 @@ func TestFaultInjection(t *testing.T) {
 			faultServerMethodHeader: "testMethod",
 			faultAbortCodeHeader:    "500",
 
-			wantResp: &http.Response{
-				StatusCode: http.StatusOK,
-			},
+			wantStatusCode: http.StatusOK,
 		},
 		{
 			name: "method does not match",
@@ -445,9 +439,7 @@ func TestFaultInjection(t *testing.T) {
 			faultServerMethodHeader: "fooMethod",
 			faultAbortCodeHeader:    "500",
 
-			wantResp: &http.Response{
-				StatusCode: http.StatusOK,
-			},
+			wantStatusCode: http.StatusOK,
 		},
 		{
 			name: "less than min abort code",
@@ -456,9 +448,7 @@ func TestFaultInjection(t *testing.T) {
 			faultServerMethodHeader: "testMethod",
 			faultAbortCodeHeader:    "99",
 
-			wantResp: &http.Response{
-				StatusCode: http.StatusOK,
-			},
+			wantStatusCode: http.StatusOK,
 		},
 		{
 			name: "greater than max abort code",
@@ -467,9 +457,7 @@ func TestFaultInjection(t *testing.T) {
 			faultServerMethodHeader: "testMethod",
 			faultAbortCodeHeader:    "600",
 
-			wantResp: &http.Response{
-				StatusCode: http.StatusOK,
-			},
+			wantStatusCode: http.StatusOK,
 		},
 	}
 
@@ -524,11 +512,29 @@ func TestFaultInjection(t *testing.T) {
 
 			resp, err := client.Do(req)
 
-			if err != nil {
-				t.Fatalf("expected no error, got %v", err)
-			}
-			if tt.wantResp.StatusCode != resp.StatusCode {
-				t.Fatalf("expected response code %v, got %v", tt.wantResp.StatusCode, resp.StatusCode)
+			if tt.wantStatusCode < 400 {
+				if tt.wantStatusCode != resp.StatusCode {
+					t.Fatalf("expected response code %d, got %d", tt.wantStatusCode, resp.StatusCode)
+				}
+			} else {
+				if err == nil {
+					t.Fatal("expected err, got nil")
+				}
+
+				var gotErrCode int
+
+				var unwrapped interface{ Unwrap() []error }
+				if errors.As(err.(*url.Error).Err, &unwrapped) {
+					errs := unwrapped.Unwrap()
+					if len(errs) == 0 {
+						t.Fatal("expected at least 1 err, got 0")
+					}
+					gotErrCode = errs[0].(*ClientError).StatusCode
+				}
+
+				if tt.wantStatusCode != gotErrCode {
+					t.Fatalf("expected error code %d, got %d", tt.wantStatusCode, gotErrCode)
+				}
 			}
 		})
 	}

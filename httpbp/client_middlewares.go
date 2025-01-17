@@ -374,6 +374,7 @@ func (c clientFaultMiddleware) Middleware() ClientMiddleware {
 						"Content-Type":           {"text/plain; charset=utf-8"},
 						"X-Content-Type-Options": {"nosniff"},
 					},
+					Body:             http.NoBody,
 					ContentLength:    0,
 					TransferEncoding: req.TransferEncoding,
 					Request:          req,
