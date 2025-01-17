@@ -116,8 +116,6 @@ var sleep = func(ctx context.Context, d time.Duration) error {
 
 // Injector contains the data common across all requests needed to inject
 // faults on outgoing requests.
-//
-// AbortCodeMin and AbortCodeMax are required.
 type Injector[T any] struct {
 	clientName, callerName     string
 	abortCodeMin, abortCodeMax int
@@ -125,12 +123,15 @@ type Injector[T any] struct {
 	defaultFaultFn FaultFn[T]
 }
 
+// WithDefaultFaultFn is an option to set the default fault function for the
+// Injector.
 func WithDefaultFaultFn[T any](fn FaultFn[T]) func(*Injector[T]) {
 	return func(i *Injector[T]) {
 		i.defaultFaultFn = fn
 	}
 }
 
+// NewInjector creates a new Injector with the provided parameters.
 func NewInjector[T any](clientName, callerName string, abortCodeMin, abortCodeMax int, option ...func(*Injector[T])) *Injector[T] {
 	i := &Injector[T]{
 		clientName:   clientName,
