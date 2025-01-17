@@ -362,7 +362,7 @@ func (c clientFaultMiddleware) Middleware() ClientMiddleware {
 				return next.RoundTrip(req)
 			}
 
-			c.injector.FaultFn = func(code int, message string) (*http.Response, error) {
+			faultFn := func(code int, message string) (*http.Response, error) {
 				return &http.Response{
 					Status:     http.StatusText(code),
 					StatusCode: code,
@@ -384,7 +384,7 @@ func (c clientFaultMiddleware) Middleware() ClientMiddleware {
 
 			address := req.URL.Hostname()
 			method := strings.TrimPrefix(req.URL.Path, "/")
-			return c.injector.Inject(req.Context(), address, method, httpHeaders{req}, resumeFn)
+			return c.injector.InjectWithFaultOverride(req.Context(), address, method, httpHeaders{req}, resumeFn, faultFn)
 		})
 	}
 }

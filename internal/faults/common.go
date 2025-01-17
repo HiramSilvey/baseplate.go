@@ -117,16 +117,23 @@ var sleep = func(ctx context.Context, d time.Duration) error {
 // Injector contains the data common across all requests needed to inject
 // faults on outgoing requests.
 //
-// AbortCodeMin, AbortCodeMax, and FaultFn are required.
+// AbortCodeMin and AbortCodeMax are required.
 type Injector[T any] struct {
 	ClientName, CallerName     string
 	AbortCodeMin, AbortCodeMax int
 
-	FaultFn FaultFn[T]
+	DefaultFaultFn FaultFn[T]
 }
 
-// Inject injects a fault on the outgoing request if it matches the header configuration.
+// Inject injects a fault on the outgoing request if it matches the header
+// configuration.
 func (i *Injector[T]) Inject(ctx context.Context, address, method string, headers Headers, resumeFn ResumeFn[T]) (T, error) {
+	return i.InjectWithFaultOverride(ctx, address, method, headers, resumeFn, nil)
+}
+
+// InjectWithFaultOverride injects a fault using the override fault function, if
+// present, on the outgoing request if it matches the header configuration.
+func (i *Injector[T]) InjectWithFaultOverride(ctx context.Context, address, method string, headers Headers, resumeFn ResumeFn[T], overrideFaultFn FaultFn[T]) (T, error) {
 	delayed := false
 	totalReqsCounter := func(success, aborted bool) prometheus.Counter {
 		return TotalRequests.WithLabelValues(
@@ -242,7 +249,10 @@ func (i *Injector[T]) Inject(ctx context.Context, address, method string, header
 			}
 
 			totalReqsCounter(true, true).Inc()
-			return i.FaultFn(code, abortMessage)
+			if overrideFaultFn != nil {
+				return overrideFaultFn(code, abortMessage)
+			}
+			return i.DefaultFaultFn(code, abortMessage)
 		}
 	}
 

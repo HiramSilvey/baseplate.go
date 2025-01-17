@@ -22,7 +22,7 @@ func NewClientFaultMiddleware(clientName, address string) clientFaultMiddleware 
 			CallerName:   "thriftpb.clientFaultMiddleware",
 			AbortCodeMin: thrift.UNKNOWN_TRANSPORT_EXCEPTION,
 			AbortCodeMax: thrift.END_OF_FILE,
-			FaultFn: func(code int, message string) (thrift.ResponseMeta, error) {
+			DefaultFaultFn: func(code int, message string) (thrift.ResponseMeta, error) {
 				return thrift.ResponseMeta{}, thrift.NewTTransportException(code, message)
 			},
 		},
