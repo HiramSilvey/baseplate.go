@@ -156,6 +156,8 @@ func NewInjector[T any](clientName, callerName string, abortCodeMin, abortCodeMa
 // InjectWithAbortOverride injects a fault using the provided fault function
 // on the outgoing request if it matches the header configuration.
 func (i *Injector[T]) InjectWithAbortOverride(ctx context.Context, address, method string, headers Headers, resume Resume[T], abort Abort[T]) (T, error) {
+	slog.With("caller", i.callerName).DebugContext(ctx, fmt.Sprintf("HIRAMSILVEY fault injector called for address %q on method %q\n", address, method))
+
 	delayed := false
 	totalReqsCounter := func(success, aborted bool) prometheus.Counter {
 		return totalRequests.WithLabelValues(
@@ -187,12 +189,14 @@ func (i *Injector[T]) InjectWithAbortOverride(ctx context.Context, address, meth
 		return resume()
 	}
 	requestAddress := getCanonicalAddress(address)
+	slog.With("caller", i.callerName).DebugContext(ctx, fmt.Sprintf("HIRAMSILVEY cleaned address %q on method %q, with fault header address %q", requestAddress, method, faultHeaderAddress))
 	if faultHeaderAddress == "" || faultHeaderAddress != requestAddress {
 		totalReqsCounter(true, false).Inc()
 		return resume()
 	}
 
 	serverMethod, err := headers.Lookup(ctx, FaultServerMethodHeader)
+	slog.With("caller", i.callerName).DebugContext(ctx, fmt.Sprintf("HIRAMSILVEY cleaned address %q on method %q, with fault header address %q and fault header method %q", requestAddress, method, faultHeaderAddress, serverMethod))
 	if err != nil {
 		infof("error looking up header %q: %v", FaultServerMethodHeader, err)
 		totalReqsCounter(true, false).Inc()
